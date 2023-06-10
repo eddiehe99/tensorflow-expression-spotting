@@ -2,7 +2,7 @@
 
 ## Research Article
 
-> He, E.; Chen, Q.; Zhong, Q. SL-Swin: A Transformer-Based Deep Learning Approach for Macro- and Micro-Expression Spotting on Small-Size Expression Datasets. Preprints.org 2023, 2023060079. <https://doi.org/10.20944/preprints202306.0079.v1>
+> He, E.; Chen, Q.; Zhong, Q. SL-Swin: A Transformer-Based Deep Learning Approach for Macro- and Micro-Expression Spotting on Small-Size Expression Datasets. Preprints.org 2023, 2023060079. <https://doi.org/10.20944/preprints202306.0079.v2>
 
 ## Related Repositories
 
