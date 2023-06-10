@@ -1,8 +1,9 @@
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 import tensorflow as tf
+from tensorflow.python.client import device_lib
+from sklearn.model_selection import LeaveOneGroupOut
+import gc
+from __utils__ import functions
+import models
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -10,21 +11,13 @@ if gpus:
     try:
         tf.config.set_logical_device_configuration(
             gpus[0],
-            [tf.config.LogicalDeviceConfiguration(memory_limit=3072)],
+            [tf.config.LogicalDeviceConfiguration(memory_limit=7168)],
         )
         logical_gpus = tf.config.list_logical_devices("GPU")
         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
     except RuntimeError as e:
         # Virtual devices must be set before GPUs have been initialized
         print(e)
-
-from tensorflow.python.client import device_lib
-from sklearn.model_selection import LeaveOneGroupOut
-from mean_average_precision.mean_average_precision import MeanAveragePrecision2d
-from spotting import *
-from evaluation import *
-import functions
-import models
 
 print("tf version:", tf.__version__)
 print(tf.config.list_physical_devices("GPU"))
@@ -49,25 +42,14 @@ def train(
     train_or_not,
     epochs,
     batch_size,
-    clean_subjects_videos_ground_truth_labels,
-    resampled_clean_videos_images_features,
-    clean_subjects,
-    clean_subjects_videos_code,
-    k,
-    show_plot_or_not,
 ):
     logo = LeaveOneGroupOut()
-    logo.get_n_splits(X, y, groups)
-    split = 0
-    reconstructed_clean_videos_ground_truth_labels_len = 0
-    metric_fn = MeanAveragePrecision2d(num_classes=1)
-    matrix = {"precision": [], "recall": [], "F1-score": []}
-    p = 0.55  # From our analysis, 0.55 achieved the highest F1-Score
+    n_splits = logo.get_n_splits(X, y, groups)
+    preds = []
 
     # Leave One Subject Out
-    for train_index, test_index in logo.split(X, y, groups):
-        split += 1
-        print(f"Split {split} is in process.")
+    for split, (train_index, test_index) in enumerate(logo.split(X, y, groups)):
+        print(f"Split {split} / {n_splits} is in process.")
 
         # Get training set
         X_train, X_test = [X[i] for i in train_index], [X[i] for i in test_index]
@@ -84,9 +66,11 @@ def train(
             X_train, y_train = functions.downsample(X_train, y_train)
 
             # Data augmentation to the micro-expression samples only
-            if expression_type == "micro-expression":
+            if expression_type == "me":
                 X_train, y_train = functions.augment_data(X_train, y_train)
 
+            # normalization
+            # cv2.normalize works better than tf.image
             X_train = functions.normalize(X_train)
             X_test = functions.normalize(X_test)
 
@@ -118,7 +102,6 @@ def train(
                 schedule=lambda epoch: 0.001 * (0.9**epoch)
             )
 
-            # with tf.device('device:GPU:1'):
             model.fit(
                 train_ds,
                 epochs=epochs,
@@ -126,39 +109,17 @@ def train(
                 shuffle=True,
                 # callbacks=[callback],
             )
+            del X_train
+            gc.collect()
         else:
             # Load Pretrained Weights
             # model.load_weights(weights_path)
             pass
 
         pred = model.predict(val_ds)
+        preds.append(pred)
+        del X_test
+        gc.collect()
+        print(f"Split {split} / {n_splits} is processed.\n")
 
-        # Spotting
-        (reconstructed_clean_videos_ground_truth_labels_len, metric_fn) = spot(
-            pred,
-            reconstructed_clean_videos_ground_truth_labels_len,
-            clean_subjects_videos_ground_truth_labels,
-            split,
-            resampled_clean_videos_images_features,
-            clean_subjects,
-            clean_subjects_videos_code,
-            k,
-            metric_fn,
-            p,
-            show_plot_or_not,
-        )
-
-        # Evaluation
-        # every evaluation considers all splitted videos
-        precision, recall, F1_score = evaluate(
-            reconstructed_clean_videos_ground_truth_labels_len,
-            metric_fn,
-        )
-
-        matrix["precision"].append(precision)
-        matrix["recall"].append(recall)
-        matrix["F1-score"].append(F1_score)
-
-        print(f"Split {split} is processed.\n")
-
-    return metric_fn, matrix
+    return preds

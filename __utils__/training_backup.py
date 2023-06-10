@@ -1,7 +1,3 @@
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 import tensorflow as tf
 
 gpus = tf.config.list_physical_devices("GPU")
@@ -19,12 +15,12 @@ if gpus:
         print(e)
 
 from tensorflow.python.client import device_lib
-import numpy as np
 from sklearn.model_selection import LeaveOneGroupOut
-from mean_average_precision.mean_average_precision import MeanAveragePrecision2d
-from spotting import *
-from evaluation import *
-import functions
+from __utils__.mean_average_precision.mean_average_precision import (
+    MeanAveragePrecision2d,
+)
+from __utils__ import spotting
+from __utils__ import functions
 import models
 
 print("tf version:", tf.__version__)
@@ -39,29 +35,6 @@ def normalize_dev(image, label):
     image = tf.image.per_image_standardization(image)
     # label = tf.cast(label, tf.float32)
     return image, label
-
-
-def generator(X, y, batch_size=12):
-    while True:
-        for start in range(0, len(X), batch_size):
-            end = min(start + batch_size, len(X))
-            num_images = end - start
-            X[start:end] = functions.normalize(X[start:end])
-            u = np.array(X[start:end])[:, :, :, 0].reshape(num_images, 42, 42, 1)
-            v = np.array(X[start:end])[:, :, :, 1].reshape(num_images, 42, 42, 1)
-            os = np.array(X[start:end])[:, :, :, 2].reshape(num_images, 42, 42, 1)
-            # yield [u, v, os], np.array(y[start:end])
-
-            # Fit for ViT
-            u_v_os = np.concatenate((u, v, os), axis=3)
-            yield u_v_os, np.array(y[start:end])
-
-
-def generator_dev(X, y):
-    start = 0
-    while start < len(X):
-        yield X[start], y[start]
-        start += 1
 
 
 def train(
@@ -81,7 +54,7 @@ def train(
     show_plot_or_not,
 ):
     logo = LeaveOneGroupOut()
-    n_splits = logo.get_n_splits(X, y, groups)
+    logo.get_n_splits(X, y, groups)
     split = 0
     reconstructed_clean_videos_ground_truth_labels_len = 0
     metric_fn = MeanAveragePrecision2d(num_classes=1)
@@ -91,7 +64,7 @@ def train(
     # Leave One Subject Out
     for train_index, test_index in logo.split(X, y, groups):
         split += 1
-        print(f"Split {split} / {n_splits} is in process.")
+        print(f"Split {split} is in process.")
 
         # Get training set
         X_train, X_test = [X[i] for i in train_index], [X[i] for i in test_index]
@@ -108,30 +81,57 @@ def train(
             X_train, y_train = functions.downsample(X_train, y_train)
 
             # Data augmentation to the micro-expression samples only
-            if expression_type == "micro-expression":
+            if expression_type == "me":
                 X_train, y_train = functions.augment_data(X_train, y_train)
 
-            model.fit(
-                generator(X_train, y_train, batch_size),
-                steps_per_epoch=len(X_train) / batch_size,
-                epochs=epochs,
-                validation_data=generator(X_test, y_test, batch_size),
-                validation_steps=len(X_test) / batch_size,
-                shuffle=True,
+            X_train = functions.normalize(X_train)
+            X_test = functions.normalize(X_test)
+
+            train_ds = (
+                tf.data.Dataset.from_tensor_slices((X_train, y_train))
+                # .map(
+                #     normalize_dev,
+                #     num_parallel_calls=tf.data.AUTOTUNE,
+                # )
+                .batch(batch_size)
+                .shuffle(len(X_train))
+                .prefetch(tf.data.AUTOTUNE)
+            )
+            val_ds = (
+                tf.data.Dataset.from_tensor_slices((X_test, y_test))
+                # .map(
+                #     normalize_dev,
+                #     num_parallel_calls=tf.data.AUTOTUNE,
+                # )
+                .batch(batch_size).prefetch(tf.data.AUTOTUNE)
             )
 
+            def scheduler(epoch, lr):
+                lr_new = lr * (0.97**epoch)
+                return lr_new if lr_new >= 5e-5 else 5e-5
+
+            # callback = tf.keras.callbacks.LearningRateScheduler(scheduler)
+            callback = tf.keras.callbacks.LearningRateScheduler(
+                schedule=lambda epoch: 0.001 * (0.9**epoch)
+            )
+
+            # with tf.device('device:GPU:1'):
+            model.fit(
+                train_ds,
+                epochs=epochs,
+                validation_data=val_ds,
+                shuffle=True,
+                # callbacks=[callback],
+            )
         else:
             # Load Pretrained Weights
             # model.load_weights(weights_path)
             pass
 
-        pred = model.predict(
-            generator(X_test, y_test, batch_size),
-            steps=len(X_test) / batch_size,
-        )
+        pred = model.predict(val_ds)
 
         # Spotting
-        (reconstructed_clean_videos_ground_truth_labels_len, metric_fn) = spot(
+        (reconstructed_clean_videos_ground_truth_labels_len, metric_fn) = spotting.spot(
             pred,
             reconstructed_clean_videos_ground_truth_labels_len,
             clean_subjects_videos_ground_truth_labels,
@@ -147,7 +147,7 @@ def train(
 
         # Evaluation
         # every evaluation considers all splitted videos
-        precision, recall, F1_score = evaluate(
+        precision, recall, F1_score = functions.evaluate(
             reconstructed_clean_videos_ground_truth_labels_len,
             metric_fn,
         )
@@ -156,6 +156,6 @@ def train(
         matrix["recall"].append(recall)
         matrix["F1-score"].append(F1_score)
 
-        print(f"Split {split} / {n_splits} is processed.\n")
+        print(f"Split {split} is processed.\n")
 
     return metric_fn, matrix

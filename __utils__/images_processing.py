@@ -8,7 +8,7 @@ import cv2
 from pathlib import Path
 
 
-def load_images_dev(
+def load_images(
     dataset_dir, images_loading=False, image_size=128, load_cropped_images=True
 ):
     videos_images = []
@@ -240,7 +240,7 @@ def dlib_mmod_face_detect(image):
 
 
 # Save the videos_images into folder 'cropped_xxx'
-def crop_images_dev(dataset_dir):
+def crop_images(dataset_dir):
     """
     https://learnopencv.com/face-detection-opencv-dlib-and-deep-learning-c-python/
     https://www.cnblogs.com/ssyfj/p/9286643.html
@@ -400,7 +400,7 @@ def crop_images_dev(dataset_dir):
                 cv2.imwrite(str(cropped_subject_video_dir / image_filename), face)
 
 
-def load_images(dataset_name):
+def legacy_load_images(dataset_name):
     videos_images = []
     subjects = []
     subjects_videos_code = []
@@ -446,14 +446,14 @@ def load_images(dataset_name):
 
 
 # Save the videos_images into folder 'cropped_xxx'
-def crop_images(dataset_name):
+def legacy_crop_images(dataset_name):
     face_detector = dlib.get_frontal_face_detector()
     # the mmod_human_face_detector is rubbish!
     # face_detector = dlib.cnn_face_detection_model_v1(
-    #     "./__utils__/mmod_human_face_detector.dat"
+    #     "mmod_human_face_detector.dat"
     # )
-    modelFile = "./__utils__/res10_300x300_ssd_iter_140000_fp16.caffemodel"
-    configFile = "./__utils__/deploy.prototxt"
+    modelFile = "res10_300x300_ssd_iter_140000_fp16.caffemodel"
+    configFile = "deploy.prototxt"
     net = cv2.dnn.readNetFromCaffe(configFile, modelFile)
 
     if dataset_name == "D:/Databases/CAS(ME)^2":
